@@ -5,7 +5,7 @@
 
     Produces FFT in 1, 2 or 3 dimensions, relating to kt, kx and ky. Note: KT is always a real fft.
     Input: a 1-3 dimensional array
-    Output: 3 arrays of same dimension as input array. msf index, Difference between msf output and signal, msf signal.
+    Output: 3 arrays of same dimension as input array: 1) msf index, 2) Difference between, msf output and signal, 3) msf signal.
     
     Change log:
     
@@ -52,7 +52,7 @@ def filter_psd_kperp(psd, ks, bins, workers=-1):  # !!! Doesn't work - FIX
 
 
 @njit(parallel=True)
-def find_diff(ifft_bins, dat, sec=False, workers=-1):
+def find_diff(ifft_bins, dat,sec=False, workers=-1):
     threads = get_num_threads() if workers == -1 else workers
     set_num_threads(threads)
 
@@ -67,14 +67,11 @@ def find_diff(ifft_bins, dat, sec=False, workers=-1):
     return diff
 
 
-def __get_threads__(workers):
-    threads = get_num_threads() if workers == -1 else workers
-    return threads
-
 
 @njit(parallel=True)
 def msf_par(diff, ifft_bins, sec=False, workers=-1):
-    threads = __get_threads__(workers)
+    
+    threads = get_num_threads() if workers == -1 else workers
     set_num_threads(threads)
 
     msf_ind = np.zeros(np.shape(diff[0]))
@@ -133,7 +130,7 @@ class msf:
                     trans_ax = (2, 0, 1)
                     self.trans_r = self.ax
             var = np.transpose(var, trans_ax)
-        return trans_ax
+        return var
 
     def __permute_data__(self, var):
         if (self.dims == 1) & (self.datdims != 1):  # 1 frequency dimension in ND data
@@ -146,14 +143,14 @@ class msf:
                     trans_ax = (1, 0)
                     self.trans_r = (1, 0)
                 else:  # in 3D data
-                    trans_ax = self.__permute_2dir_3D__()
+                    trans_ax = self.__permute_dir2_dim3__()
                 var = np.transpose(var, trans_ax)
         elif (self.dims == 3):  # 3 frequency dimension (in 3D data)
-            var = self.__permute_3D__(var)
+            var = self.__permute_dim3__(var)
 
         return var
 
-    def __init__(self, file, axes=(0, 1, 2), normalise=False, normconst=0.5):
+    def __init__(self, file, axes=(0, 1, 2), dt=None,dx=None,dy=None, normalise=False, normconst=0.5):
 
         var = file.copy()
         self.ax = axes
@@ -172,6 +169,9 @@ class msf:
             self.dat_non_normalised = var
             var = np.sign(var)*np.abs(var)**self.normconst
         self.dat = var
+        
+        self.dt,self.dx,self.dy=dt,dx,dy
+
 
     # Can be used to permute msf results or data to dimension original order
     def repermute_data(self, f):
@@ -208,8 +208,9 @@ class msf:
                 'Dimensions of selected axes must be in range 1-3.')
 
     def __get_axes_fft__(self,):
-
-        if self.dims == 2:
+        if self.dims== 1:
+            return None
+        elif self.dims == 2:
             axes_fft = (1, 0)
         elif self.dims == 3:
             axes_fft = (1, 2, 0)
@@ -217,14 +218,18 @@ class msf:
         return axes_fft
 
     def __get_axes_shift__(self,):
-        if self.dims == 2:
+        if self.dims== 1:
+            return None
+        elif self.dims == 2:
             axes_shift = (1,)
         elif self.dims == 3:
             axes_shift = (1, 2)
         return axes_shift
 
     def __get_s__(self):
-        if self.dims == 2:
+        if self.dims== 1:
+            return None
+        elif self.dims == 2:
             s = (self.mx, self.mt)
         elif self.dims == 3:
             s = (self.mx, self.my, self.mt)
@@ -244,20 +249,20 @@ class msf:
             sci.fft.rfftn((self.dat).astype(float), s=s, axes=axes_fft, workers=workers), axes=axes_shift)
         return psd
 
-    def calc_freq(self, dt=None, dx=None, dy=None):
+    def calc_freq(self,):
         # Calculate frequency range and resolution
         self.get_dims()
 
         if hasattr(self, "mx"):
             try:
-                self.kx = sci.fft.fftshift(sci.fft.fftfreq(self.mx, dx))
+                self.kx = sci.fft.fftshift(sci.fft.fftfreq(self.mx, self.dx))
                 self.kx_pos = self.kx[self.kx >= 0]
             except TypeError:
                 raise RuntimeError("Missing dx")
 
         if hasattr(self, "my"):
             try:
-                self.ky = sci.fft.fftshift(sci.fft.fftfreq(self.my, dy))
+                self.ky = sci.fft.fftshift(sci.fft.fftfreq(self.my, self.dy))
                 self.ky_pos = self.ky[self.ky >= 0]
             except TypeError:
                 raise RuntimeError("Missing dy")
@@ -265,7 +270,7 @@ class msf:
         if hasattr(self, "mt"):
             try:
                 # Real fft on final dimension
-                self.kt = sci.fft.rfftfreq(self.mt, dt)
+                self.kt = sci.fft.rfftfreq(self.mt, self.dt)
             except TypeError:
                 raise RuntimeError("Missing dt")
 
@@ -291,13 +296,13 @@ class msf:
             raise ValueError("Invalid frequency direction for bin.")
         return k
 
-    def create_freqbins(self, dir='kt', f_max=-1, dt=None, dx=None, dy=None):
+    def create_freqbins(self, dir='kt', f_max=-1):
 
         if not hasattr(self, "kt"):
-            self.calc_freq(dt=dt, dx=dx, dy=dy)
+            self.calc_freq()
 
         if dir == 'kperp':
-            f_max = min(f_max, np.max(self.kx), np.max(self.ky)) if f_max > 0 else min(
+            f_max = min(f_max, np.max(self.kx), np.max(self.ky)) if f_max >0 else min(
                 np.max(self.kx), np, max(self.ky))
             target = self.kx_pos
             bounds = list(target[target <= f_max])
@@ -363,7 +368,7 @@ class msf:
 
         return psd_bins
 
-    def __get_ks__(self, psd):
+    def __get_ks__(self, psd,dir):
         if dir == 'kt':
 
             if (self.datdims == 2) & (self.dims != 2):
@@ -389,7 +394,7 @@ class msf:
 
         return ks
 
-    def __get_psd__(self, psd, workers):
+    def __get_psd__(self, workers=-1,psd=None, **kwargs):
         if psd is None:
             print("No psd found. Calculating psd...")
             print(" ")
@@ -398,7 +403,7 @@ class msf:
             print(" ")
         return psd
 
-    def __get_bins__(self, bins, f_max, dx, dy, dt):
+    def __get_bins__(self, dir=None,f_max=None,bins=None, **kwargs):
         if bins is None:
             if (hasattr(self, 'bins')) & (f_max is None):
                 bins = self.bins
@@ -408,15 +413,16 @@ class msf:
                 print("No frequency bins found. Creating bins...")
                 print(" ")
                 bins = self.create_freqbins(
-                    dir=dir, f_max=f_max, dx=dx, dy=dy, dt=dt)
+                    dir=dir, f_max=f_max)
 
                 print("Bins created.")
         return bins
-
-    def filtered_ifft(self, psd=None, bins=None, dir='kt', parallel=True, workers=-1, f_max=None, dt=None, dy=None, dx=None):
-        psd = self.__get_psd__(psd, workers)
-
-        bins = self.__get_bins__(bins, f_max, dx, dy, dt)
+    
+    #kwargs: psd,bins,f_max
+    def filtered_ifft(self, f_max=None, dir='kt', parallel=True, workers=-1, **kwargs):
+        psd = self.__get_psd__(workers, **kwargs)
+        
+        bins = self.__get_bins__(dir,f_max, **kwargs)
 
         if parallel:
             if dir == 'kperp':
@@ -426,7 +432,7 @@ class msf:
                 psd_bins = filter_psd_kperp(psd, ks, bins, workers)
                 print("Done.")
             else:
-                ks = self.kt if self.datdims == 1 else self.__get_ks__(psd)
+                ks = self.kt if self.datdims == 1 else self.__get_ks__(psd,dir)
                 print("Filtering psd...")
                 print(" ")
                 psd_bins = filter_psd(psd, ks, bins, workers)
@@ -444,7 +450,7 @@ class msf:
 
         return ifft_bins
 
-    # kwargs: psd, bins, parallel=True, workers=-1,dir=None,f_max=None,dt=None,dy=None,dx=None
+    # kwargs: psd, bins, parallel=True, workers=-1,dir=None,f_max=None
     def __get_ifft_bins__(self, ifft_bins=None, **kwargs):
         if ifft_bins is not None:
             return ifft_bins
@@ -454,24 +460,17 @@ class msf:
             if dir is None:
                 raise ValueError(
                     "Frequency direction not specified. Need either pre-calculated bins or direction for calculation.")
-            ifft_bins = self.filtered_ifft(**kwargs)  # kwargs:
+            ifft_bins = self.filtered_ifft(**kwargs)
             print("Filtered fft bins calculated.")
             print(" ")
         return ifft_bins
 
-    def point_diff(self, ifft_bins=None, dat=None, sec=False, parallel=True, workers=-1, dir=None, **kwargs):  # kwargs: psd, bins
+    def point_diff(self, ifft_bins=None, sec=False, parallel=True, workers=-1, dir=None, **kwargs):  # kwargs: psd, bins
 
         ifft_bins = self.__get_ifft_bins__(
-            ifft_bins, parallel, workers, dir, **kwargs)
+            ifft_bins, parallel=parallel, workers=workers, dir=dir, **kwargs)
 
-        if dat is None:
-            if hasattr(self, 'dat'):
-                print("Using self.dat for data")
-                dat = self.dat
-
-            else:
-                # Not needed technically
-                raise ValueError("Data not specified.")
+        dat = self.dat
 
         if parallel:
             diff_list = find_diff(ifft_bins=ifft_bins,
@@ -482,7 +481,7 @@ class msf:
 
         return diff_list
 
-    def __get_point_diff__(self, ifft_bins, sec, parallel, workers, dir, point_diff=None, dat=None, **kwargs):  # kwargs: psd,bins
+    def __get_point_diff__(self, ifft_bins, point_diff=None, **kwargs):  # kwargs: psd,bins
         if point_diff is not None:
             return point_diff
         else:
@@ -491,15 +490,14 @@ class msf:
             point_diff = self.point_diff(ifft_bins, **kwargs)
             print("Point difference calculated.")
             print(" ")
-        return point_diff
+        return point_diff 
 
-    def calc_msf(self, point_diff=None, ifft_bins=None, sec=False, parallel=False, workers=-1, dir=None, **kwargs):
-
-        ifft_bins = self.__get_ifft_bins__(
-            ifft_bins, parallel, workers, **kwargs)
-
-        point_diff = self.__get_point_diff__(
-            point_diff, ifft_bins, sec, parallel, workers, dir, **kwargs)
+    #kwargs: ifft_bins, point_diff, psd f_max=None
+    def calc_msf(self, sec=False, parallel=False, workers=-1, dir=None, **kwargs):
+        
+        ifft_bins = self.__get_ifft_bins__(parallel=parallel, workers=workers, **kwargs)
+        kwargs["ifft_bins"] = ifft_bins
+        point_diff = self.__get_point_diff__(sec=sec, parallel=parallel, workers=workers, dir=dir, **kwargs)
 
         print("Calculating msf...")
         print(" ")
@@ -516,7 +514,7 @@ class msf:
                              for i in ifft_bins]
 
             msf_index, msf_diff, msf_wave = msf_par(
-                point_diff, ifft_bins, sec=sec)
+                diff=point_diff, ifft_bins=ifft_bins, sec=sec, workers=workers)
 
         else:
 
@@ -534,61 +532,11 @@ class msf:
             else:
                 msf_wave = np.choose(msf_index, ifft_bins) + \
                     np.where(msf_index != 0, ifft_bins[0], 0)
-
-        print("Finished")
-        return msf_index, msf_diff, msf_wave
-
-    # **kwargs: psd,bins,ifft_bins,dat
-    def run_msf(self, sec=False, parallel=True, workers=-1, dir=None, f_max=None, dt=None, dx=None, dy=None, detail=False, **kwargs):
-        print("Calculating filtered fft bins...")
-        print(" ")
-
-        # self.filtered_ifft(dir=dir, parallel=parallel, workers=workers,
-        ifft_bins = self.__get_ifft_bins__(
-            parallel=parallel, workers=workers, dir=dir, f_max=f_max, dx=dx, dy=dy, dt=dt, **kwargs)
-        #                                f_max=f_max, dx=dx, dy=dy, dt=dt, **kwargs)
-
-        print("Filtered fft bins calculated. Calculating point difference...")
-        print(" ")
-
-        point_diff = self.__get_point_diff__(
-            ifft_bins, sec=sec, parallel=parallel, workers=workers, dir=dir, f_max=f_max, dx=dx, dy=dy, dt=dt, **kwargs)
-
-        print("Point difference calculated.")
-        print(" ")
+            
+        msf_wave=self.repermute_data(msf_wave)
+        msf_index=self.repermute_data(msf_index)
+        msf_diff=self.repermute_data(msf_diff)
         
-        print("Calculating msf...")
-        print(" ")
-        if parallel:
-
-
-            if np.ndim(point_diff) == 2:
-                point_diff = point_diff.reshape(np.shape(point_diff), 1, 1)
-                ifft_bins = [i.reshape(np.shape(point_diff), 1, 1)
-                             for i in ifft_bins]
-            elif np.ndim(point_diff) == 3:
-                point_diff = point_diff.reshape(np.shape(point_diff), 1)
-                ifft_bins = [i.reshape(np.shape(point_diff), 1)
-                             for i in ifft_bins]
-
-            msf_index, msf_diff, msf_wave = msf_par(
-                point_diff, ifft_bins, sec=sec)
-
-        else:
-            msf_index = np.argmin(point_diff, axis=0)
-            print("Fetching difference...")
-            print(" ")
-            msf_diff = np.min(point_diff, axis=0)
-            print("Creating msf wave...")
-            print(" ")
-            if sec:
-                msf_wave = np.choose(msf_index, ifft_bins)
-            else:
-                msf_wave = np.choose(msf_index, ifft_bins) + \
-                    np.where(msf_index != 0, ifft_bins[0], 0)
-
         print("Finished")
-        if detail:
-            self.ifft_bins = ifft_bins
-            self.diff = point_diff
         return msf_index, msf_diff, msf_wave
+
