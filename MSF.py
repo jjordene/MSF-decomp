@@ -234,8 +234,16 @@ class msf:
         elif self.dims == 3:
             s = (self.mx, self.my, self.mt)
         return s
+    
+        
+    def __check_shape__(self,var):
+        if np.shape(var) != np.shape(self.dat):
+            var=self.__permute_data__(var)
+            if np.shape(var)!=np.shape(self.dat):
+                raise ValueError("Shape of data must be ", np.shape(self.dat))
+        return var
 
-    def psd(self, workers=-1):  # change to **kwargs? or don't?
+    def psd(self, workers=-1): 
         if not hasattr(self, "mt"):
             self.get_dims()
 
@@ -420,6 +428,7 @@ class msf:
     
     #kwargs: psd,bins,f_max
     def filtered_ifft(self, f_max=None, dir='kt', parallel=True, workers=-1, **kwargs):
+        
         psd = self.__get_psd__(workers, **kwargs)
         
         bins = self.__get_bins__(dir,f_max, **kwargs)
@@ -453,6 +462,7 @@ class msf:
     # kwargs: psd, bins, parallel=True, workers=-1,dir=None,f_max=None
     def __get_ifft_bins__(self, ifft_bins=None, **kwargs):
         if ifft_bins is not None:
+            ifft_bins = [self.__check_shape__(bin) for bin in ifft_bins]
             return ifft_bins
         else:
             print("No ifft_bins found. Calculating filtered fft bins...")
@@ -466,11 +476,19 @@ class msf:
         return ifft_bins
 
     def point_diff(self, ifft_bins=None, sec=False, parallel=True, workers=-1, dir=None, **kwargs):  # kwargs: psd, bins
+        if sec:
+            try:
+                dat = kwargs["data"]
+                dat=self.__check_shape__(dat)
+            except KeyError:
+                raise KeyError("Must give new data on secondary iterations")
+            if ifft_bins is None:
+                raise ValueError("Must give new ifft_bins on secondary iterations")
+        else:
+            ifft_bins = self.__get_ifft_bins__(
+                ifft_bins, parallel=parallel, workers=workers, dir=dir, **kwargs)
 
-        ifft_bins = self.__get_ifft_bins__(
-            ifft_bins, parallel=parallel, workers=workers, dir=dir, **kwargs)
-
-        dat = self.dat
+            dat = self.dat
 
         if parallel:
             diff_list = find_diff(ifft_bins=ifft_bins,
@@ -483,6 +501,7 @@ class msf:
 
     def __get_point_diff__(self, ifft_bins, point_diff=None, **kwargs):  # kwargs: psd,bins
         if point_diff is not None:
+            point_diff=[self.__check_shape__(diff) for diff in point_diff]
             return point_diff
         else:
             print("No point_diff found. Calculating point difference...")
@@ -492,18 +511,26 @@ class msf:
             print(" ")
         return point_diff 
 
-    #kwargs: ifft_bins, point_diff, psd f_max=None
-    def calc_msf(self, sec=False, parallel=False, workers=-1, dir=None, **kwargs):
+    #kwargs: ifft_bins, data, point_diff, psd f_max=None
+    def calc_msf(self, sec=False, parallel=False, workers=-1, dir=None, save_bins=False, **kwargs):
+        if sec:
+            try:
+                ifft_bins = kwargs["ifft_bins"]
+            except KeyError:
+                raise KeyError("Must give new ifft_bins on secondary iterations")
+        else:    
+            ifft_bins = self.__get_ifft_bins__(parallel=parallel, workers=workers, **kwargs)
+            kwargs["ifft_bins"] = ifft_bins
         
-        ifft_bins = self.__get_ifft_bins__(parallel=parallel, workers=workers, **kwargs)
-        kwargs["ifft_bins"] = ifft_bins
+        if save_bins:
+            self.ifft_bins=ifft_bins
+            
         point_diff = self.__get_point_diff__(sec=sec, parallel=parallel, workers=workers, dir=dir, **kwargs)
 
         print("Calculating msf...")
         print(" ")
         if parallel:
             
-
             if np.ndim(point_diff) == 2:
                 point_diff = point_diff.reshape(np.shape(point_diff), 1, 1)
                 ifft_bins = [i.reshape(np.shape(point_diff), 1, 1)
@@ -532,7 +559,7 @@ class msf:
             else:
                 msf_wave = np.choose(msf_index, ifft_bins) + \
                     np.where(msf_index != 0, ifft_bins[0], 0)
-            
+                    
         msf_wave=self.repermute_data(msf_wave)
         msf_index=self.repermute_data(msf_index)
         msf_diff=self.repermute_data(msf_diff)
@@ -540,3 +567,22 @@ class msf:
         print("Finished")
         return msf_index, msf_diff, msf_wave
 
+    def data_remainder(self,dat,msf_wave): 
+        
+        new_dat = dat - msf_wave
+        return new_dat
+    
+    def bins_remainder(self, bins, ind):  #returns already permuted data for calc_msf
+        if np.shape(bins[0]) != np.shape(ind):
+            ind=self.__permute_data__(ind)
+        try:
+            bins_copy= [np.copy(bin) for bin in bins]
+            for i in range(len(bins)):
+                bins_copy[i][ind==i]=np.inf 
+        except IndexError:
+            raise RuntimeError("bins[i] and ind must be same shape")
+
+        return bins_copy  
+
+    
+    
