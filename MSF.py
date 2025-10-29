@@ -150,7 +150,7 @@ class msf:
 
         return var
 
-    def __init__(self, file, axes=(0, 1, 2), dt=None,dx=None,dy=None, normalise=False, normconst=0.5):
+    def __init__(self, file, axes=(0, 1, 2), dt=None,dx=None,dy=None, normalize=False, normconst=0.5):
 
         var = file.copy()
         self.ax = axes
@@ -164,9 +164,9 @@ class msf:
 
         var = self.__permute_data__(var)
 
-        if normalise:
+        if normalize:
             self.normconst = normconst
-            self.dat_non_normalised = var
+            self.dat_non_normalized = var
             var = np.sign(var)*np.abs(var)**self.normconst
         self.dat = var
         
@@ -179,6 +179,8 @@ class msf:
             out = np.moveaxis(f, 0, self.perm_r)
         elif self.trans_r is not None:
             out = np.transpose(f, self.trans_r)
+        else:
+            out = f
         return out
 
     def get_dims(self,):
@@ -467,9 +469,7 @@ class msf:
         else:
             print("No ifft_bins found. Calculating filtered fft bins...")
             print(" ")
-            if dir is None:
-                raise ValueError(
-                    "Frequency direction not specified. Need either pre-calculated bins or direction for calculation.")
+
             ifft_bins = self.filtered_ifft(**kwargs)
             print("Filtered fft bins calculated.")
             print(" ")
@@ -481,7 +481,7 @@ class msf:
                 dat = kwargs["data"]
                 dat=self.__check_shape__(dat)
             except KeyError:
-                raise KeyError("Must give new data on secondary iterations")
+                raise ValueError("Must give new data on secondary iterations")
             if ifft_bins is None:
                 raise ValueError("Must give new ifft_bins on secondary iterations")
         else:
@@ -512,20 +512,20 @@ class msf:
         return point_diff 
 
     #kwargs: ifft_bins, data, point_diff, psd f_max=None
-    def calc_msf(self, sec=False, parallel=False, workers=-1, dir=None, save_bins=False, **kwargs):
+    def calc_msf(self, sec=False, parallel=False, workers=-1, dir='kt', f_max=-1,save_bins=False,  **kwargs):
         if sec:
             try:
                 ifft_bins = kwargs["ifft_bins"]
             except KeyError:
-                raise KeyError("Must give new ifft_bins on secondary iterations")
+                raise ValueError("Must give new ifft_bins on secondary iterations")
         else:    
-            ifft_bins = self.__get_ifft_bins__(parallel=parallel, workers=workers, **kwargs)
+            ifft_bins = self.__get_ifft_bins__(parallel=parallel, workers=workers,f_max=f_max,dir=dir, **kwargs)
             kwargs["ifft_bins"] = ifft_bins
         
         if save_bins:
             self.ifft_bins=ifft_bins
             
-        point_diff = self.__get_point_diff__(sec=sec, parallel=parallel, workers=workers, dir=dir, **kwargs)
+        point_diff = self.__get_point_diff__(sec=sec, parallel=parallel, workers=workers,**kwargs)
 
         print("Calculating msf...")
         print(" ")
