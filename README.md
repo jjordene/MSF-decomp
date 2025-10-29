@@ -55,8 +55,8 @@ pip install msf-decomp
    ```
 
 ## 📖 Quick Start
-
-Here's a basic example of how to use `MSF-decomp` to decompose a synthetic signal and visualize the results.
+There are two ways this module can be used. The easiest is to only pass the `calc_msf` function, and all stages are calculated at once. For large data this can take some time.
+Here's a basic example of how to use `calc_msf` to decompose a synthetic signal and visualize the results.
 
 ```python
 import numpy as np
@@ -130,6 +130,12 @@ ax[1].set_xlabel('t')
 ax[1].legend()
 
 ```
+
+It is also possible to do the MSF algorithm step by step, as follows:
+- `psd` - calculates PSD through `scipy.fft`
+- `filtered_ifft` - frequency filtering of the PSD, returning signals for each induvidual frequency
+- `point_diff` - Calculates the difference between each filtered frequency signal and the original signal at each grid point.
+- `calc_msf` - Returns the MSF at each point, the point diff for the MSF signal, and the MSF signal.
 
 ## 📚 API Documentation
 
